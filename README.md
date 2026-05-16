@@ -1,6 +1,6 @@
 # Hindi ASR — Conformer-CTC from Scratch
 
-End-to-end Hindi automatic speech recognition system built from scratch using a Conformer-CTC architecture. Trained on ~300 hours of Hindi speech sourced from [AI4Bharat](https://ai4bharat.org/) datasets via HuggingFace.
+End-to-end Hindi automatic speech recognition system built from scratch using a Conformer-CTC architecture. Trained on ~600 hours of Hindi speech sourced from [AI4Bharat](https://ai4bharat.org/) datasets via HuggingFace.
 
 ---
 
