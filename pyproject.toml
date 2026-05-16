@@ -1,0 +1,112 @@
+[build-system]
+requires = ["setuptools>=72", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "hindi-asr"
+version = "0.1.0"
+description = "Hindi Automatic Speech Recognition using a Conformer-CTC architecture trained from scratch"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+
+authors = [
+    { name = "Siddhant Gahankari" }
+]
+
+keywords = ["asr", "speech-recognition", "hindi", "conformer", "ctc", "devanagari"]
+
+
+# ---------------------------------------------------------------------------
+# Core dependencies
+# NOTE: PyTorch (torch, torchaudio) is intentionally excluded here because
+# the correct wheel depends on your CUDA version. Install manually:
+#
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+#
+# See: https://pytorch.org/get-started/locally/
+# ---------------------------------------------------------------------------
+dependencies = [
+    # HuggingFace — dataset streaming
+    "datasets>=2.19.0",
+
+    # Environment variable loading (.env)
+    "python-dotenv>=1.0.0",
+
+    # Experiment tracking
+    "wandb>=0.19.0",
+
+    # Indic NLP — text normalization (Unicode, nuktas, etc.)
+    "indic-nlp-library>=0.9.2",
+
+    # Hindi number-to-words conversion (१२३ → एक सौ तेईस)
+    "indic-numtowords>=1.0.4",
+
+    # Numerics
+    "numpy>=1.26.0",
+
+    # Progress bars
+    "tqdm>=4.66.0",
+]
+
+[project.optional-dependencies]
+# Install with: pip install -e ".[dev]"
+dev = [
+    "ruff>=0.4.0",          # linting + formatting
+    "mypy>=1.10.0",         # type checking
+    "pytest>=8.2.0",        # unit tests
+    "pytest-cov>=5.0.0",    # coverage
+]
+
+# Install with: pip install -e ".[decode]"
+# For beam-search + KenLM language model decoding
+decode = [
+    "pyctcdecode>=0.5.0",
+    "pypi-kenlm>=0.1.0",
+]
+
+[project.scripts]
+hindi-asr = "main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["hindi_asr*"]
+
+# ---------------------------------------------------------------------------
+# Ruff — linting & formatting
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501", # line too long — handled by formatter
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ---------------------------------------------------------------------------
+# Mypy — static type checking
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true   # torch stubs not always available
+warn_unused_ignores = true
+warn_return_any = false
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts   = "-v --tb=short"
