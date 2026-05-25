@@ -47,6 +47,9 @@ dependencies = [
 
     # Progress bars
     "tqdm>=4.66.0",
+
+    # BPE Tokenizer
+    "tokenizers>=0.19.0",
 ]
 
 [project.optional-dependencies]

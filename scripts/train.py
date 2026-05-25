@@ -11,7 +11,7 @@ BUCKET_BOUNDARIES = [3, 6, 9, 12]
 D_MODEL = 384
 NUM_HEADS = 6
 NUM_BLOCKS = 16
-VOCAB_SIZE = 71
+VOCAB_SIZE = 300
 
 train_dataset = HindiASRDataset(MANIFEST_TRAIN, STATS_PATH, is_train=True)
 val_dataset = HindiASRDataset(MANIFEST_VAL, STATS_PATH, is_train=False)

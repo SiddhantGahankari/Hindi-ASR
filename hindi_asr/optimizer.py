@@ -1,6 +1,6 @@
 import torch
-WARMUP_STEPS = 4000
-PEAK_LR = 1e-4
+WARMUP_STEPS = 15000
+PEAK_LR = 5e-4
 
 def get_param_groups(model):
     decay = []
@@ -19,7 +19,7 @@ def get_param_groups(model):
     return [
         {
             "params": decay,
-            "weight_decay": 5e-3
+            "weight_decay": 1e-4
         },
         {
             "params": no_decay,

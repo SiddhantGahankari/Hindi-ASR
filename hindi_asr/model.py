@@ -136,12 +136,12 @@ class Conv2DSubsampler(nn.Module):
     def __init__(self, d_model, dropout=0.1):
         super().__init__()
         self.conv = nn.Sequential(
-            nn.Conv2d(1, d_model, kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(1, 32, kernel_size=3, stride=2, padding=1),
             nn.ReLU(),
-            nn.Conv2d(d_model, d_model, kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(32, 32, kernel_size=3, stride=2, padding=1),
             nn.ReLU()
         )
-        self.proj = nn.Linear(d_model * (80 // 4), d_model)
+        self.proj = nn.Linear(32 * 20, d_model)
         self.dropout = nn.Dropout(dropout)
     def forward(self, x):
         x = x.unsqueeze(1)
@@ -156,7 +156,7 @@ class Conv2DSubsampler(nn.Module):
 class ConformerCTC(nn.Module):
     def __init__(
         self,
-        vocab_size=71,
+        vocab_size=300,
         d_model=384,
         num_heads=6,
         num_blocks=16,
@@ -180,6 +180,8 @@ class ConformerCTC(nn.Module):
         for block in self.blocks:
             x = block(x, pos_enc)
         logits = self.ctc_head(x)
+        if self.training:
+            logits = logits / 1.1
         log_probs = F.log_softmax(logits.float(), dim=-1)
         l1 = ((mel_lengths - 1) // 2) + 1
         input_lengths = ((l1 - 1) // 2) + 1

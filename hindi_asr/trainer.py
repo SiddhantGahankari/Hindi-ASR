@@ -22,20 +22,24 @@ VOCAB_PATH = "data/vocab.json"
 D_MODEL = 384
 NUM_HEADS = 6
 NUM_BLOCKS = 16
-VOCAB_SIZE = 71
-WARMUP_STEPS = 4000
+VOCAB_SIZE = 300
+WARMUP_STEPS = 15000
 GRAD_CLIP = 1.0
 LOG_EVERY = 50
 EPOCHS = 30
+
 
 def train_epoch(model,loader,optimizer,scheduler,ctc_loss,scaler,step,epoch,vocab_dict_rev,blank_id):
     model.train()
     total_loss = 0.0
     num_batches = 0
     running_loss = 0.0
+    batches_in_interval = 0
+    grad_norm = torch.tensor(0.0)
     step_times = deque(maxlen=LOG_EVERY)
     epoch_start = time.time()
-    for _, batch in enumerate(loader):
+    accumulation_steps = 4
+    for batch_idx, batch in enumerate(loader):
         step_start = time.time()
         mels, tokens, mel_lengths, token_lengths = batch
         mels = mels.to(DEVICE, non_blocking=True)
@@ -53,34 +57,46 @@ def train_epoch(model,loader,optimizer,scheduler,ctc_loss,scaler,step,epoch,voca
             token_lengths
         )
             
+        # Divide ctc_loss by accumulation_steps before executing .backward()
+        loss = loss / accumulation_steps
         scaler.scale(loss).backward()
-        scaler.unscale_(optimizer)
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            model.parameters(),
-            GRAD_CLIP
-        )
-        scale_before = scaler.get_scale()
-        scaler.step(optimizer)
-        scaler.update()
-        optimizer.zero_grad(set_to_none=True)
-        scale_after = scaler.get_scale()
-        if scale_before <= scale_after:
-            scheduler.step()
+        
+        # Enforce optimization step strictly once every 4 steps (or at the final trailing batch step)
+        did_opt_step = False
+        if (batch_idx + 1) % accumulation_steps == 0 or (batch_idx + 1) == len(loader):
+            scaler.unscale_(optimizer)
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                model.parameters(),
+                GRAD_CLIP
+            )
+            scale_before = scaler.get_scale()
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad(set_to_none=True)
+            scale_after = scaler.get_scale()
+            # Shift scheduler.step() inside this block so it advances only on successful optimizer steps
+            if scale_before <= scale_after:
+                scheduler.step()
+            step += 1
+            did_opt_step = True
         
         current_lr = scheduler.get_last_lr()[0]
-        step += 1
-        loss_item = loss.item()
+        # Scale the running_loss counter appropriately so logged outputs reflect the true, un-divided batch loss value
+        loss_item = loss.item() * accumulation_steps
         total_loss += loss_item
         running_loss += loss_item
         num_batches += 1
+        batches_in_interval += 1
         
         torch.cuda.synchronize()
         step_time = time.time() - step_start
         step_times.append(step_time)
         
-        if step % LOG_EVERY == 0:
-            avg_loss = running_loss / LOG_EVERY
+        # We only log on steps where we ran an optimization step and step % LOG_EVERY == 0
+        if did_opt_step and step % LOG_EVERY == 0:
+            avg_loss = running_loss / max(batches_in_interval, 1)
             running_loss = 0.0
+            batches_in_interval = 0
             avg_step_time = sum(step_times) / len(step_times)
             elapsed = time.time() - epoch_start
             

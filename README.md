@@ -10,9 +10,9 @@ End-to-end Hindi automatic speech recognition system built from scratch using a 
 2. [Repository Structure](#2-repository-structure)
 3. [Data Sources](#3-data-sources)
 4. [Data Pipeline](#4-data-pipeline)
-   - [Stage 1 — Vocabulary Building](#stage-1--vocabulary-building)
-   - [Stage 2 — Spectrogram Generation](#stage-2--spectrogram-generation)
-   - [Stage 3 — Global Statistics](#stage-3--global-statistics)
+   - [Stage 1 — Spectrogram Generation](#stage-1--spectrogram-generation)
+   - [Stage 2 — BPE Tokenizer Training & Splitting](#stage-2--bpe-tokenizer-training--splitting)
+   - [Stage 3 — Global Statistics](#stage-3--global-stats)
 5. [Processed Data Layout](#5-processed-data-layout)
 6. [Model Architecture](#6-model-architecture)
 7. [Training Pipeline](#7-training-pipeline)
@@ -36,10 +36,10 @@ End-to-end Hindi automatic speech recognition system built from scratch using a 
 | Task | Hindi Automatic Speech Recognition (ASR) |
 | Architecture | Conformer-CTC |
 | Parameters | ~61 million |
-| Target data | ~300 hours Hindi speech |
+| Target data | ~600 hours Hindi speech |
 | Loss | CTC (Connectionist Temporal Classification) |
-| Decoder | Greedy (character-level) |
-| Vocabulary | 71 tokens (Devanagari characters + specials) |
+| Decoder | Greedy (greedy search) |
+| Vocabulary | 300 tokens (BPE subwords + specials) |
 | Framework | PyTorch |
 
 ---
@@ -66,7 +66,7 @@ Hindi-ASR/
 │   └── main.py             # Alternate entry (thin wrapper)
 │
 ├── data/
-│   ├── vocab.json              # Character → index mapping (71 tokens)
+│   ├── vocab.json              # BPE subword vocabulary mapping (300 tokens)
 │   ├── manifest_train.jsonl    # One JSON line per training sample
 │   ├── manifest_val.jsonl      # One JSON line per validation sample
 │   └── stats/
@@ -118,51 +118,13 @@ Each raw sample from HuggingFace contains:
 
 All processing is done in `scripts/data_download.py`. It runs in three sequential stages. The pipeline is **resumable** — if interrupted, it reads `pipeline_checkpoint.json` and skips already-processed samples.
 
-### Stage 1 — Vocabulary Building
+### Stage 1 — Spectrogram Generation
 
-**Purpose**: Scan transcripts to collect every unique Devanagari character used in the data, then build a fixed vocabulary.
-
-**Flow**:
-1. Stream each dataset up to `TARGET_HOURS` (300 hours)
-2. For each sample, apply `normalize_text()`:
-   - **IndicNLP normalization** — Unicode normalization, nukta handling (`indicnlp.normalize`)
-   - **Remove Latin characters** — strip any English mixed in
-   - **Devanagari digit conversion** — ०–९ → 0–9
-   - **Number-to-words** — `123` → `एक सौ तेईस` using `indic_numtowords`
-   - **Punctuation removal** — strip `।`, `॥`, and all ASCII punctuation
-   - **Whitespace collapse** — squeeze multiple spaces
-3. Collect every character into a `set()`
-4. Duration filter: skip samples outside `[1s, 15s]`
-
-**Output** — `data/vocab.json`:
-```json
-{
-  "<blank>": 0,
-  "<unk>":   1,
-  " ":       2,
-  "अ":       3,
-  "आ":       4,
-  ...
-}
-```
-
-Special tokens are prepended in this fixed order:
-- `<blank>` (index 0) — CTC blank token
-- `<unk>` (index 1) — unknown character fallback
-- `" "` (index 2) — space character
-
-**Vocabulary size: 71 tokens** (3 special + 68 Devanagari characters/matras)
-
----
-
-### Stage 2 — Spectrogram Generation
-
-**Purpose**: Convert raw audio waveforms into log-mel spectrograms and save them as compressed numpy arrays alongside a manifest.
+**Purpose**: Convert raw audio waveforms into log-mel spectrograms and save them as compressed numpy arrays alongside a temporary manifest.
 
 **Batch processing**: Waveforms are accumulated into batches of 128 (`BATCH_SIZE=128`) and processed together on GPU for efficiency. Zero-padding is applied via `pad_sequence` to make waveforms the same length within each batch.
 
 **Audio processing per sample**:
-
 1. **Load audio** — decode bytes from the HuggingFace audio object
 2. **Mono conversion** — average channels if stereo: `waveform.mean(dim=0, keepdim=True)`
 3. **SNR filter** — reject samples with Signal-to-Noise Ratio < 20 dB:
@@ -186,12 +148,11 @@ Special tokens are prepended in this fixed order:
 7. **NaN check** — reject if any spectrogram value is NaN
 8. **Save** — stored as `float16` numpy array to `processed/mels/{index:06d}.npy`, shape: `[80, T]`
 
-**Manifest entry** written to `manifest.jsonl` per saved sample:
+**Temporary Manifest entry** written to `manifest.jsonl` per saved sample:
 ```json
 {
   "mel_path": "processed/mels/000042.npy",
   "text":     "यह एक परीक्षण वाक्य है",
-  "tokens":   [2, 45, 3, ...],
   "duration": 3.72,
   "dataset":  "ai4bharat/Shrutilipi"
 }
@@ -209,6 +170,25 @@ Special tokens are prepended in this fixed order:
 ```json
 { "saved_samples": 45000, "processed_seconds_total": 486321.4 }
 ```
+
+---
+
+### Stage 2 — BPE Tokenizer Training & Splitting
+
+**Purpose**: Train a Byte-Pair Encoding (BPE) subword tokenizer on the normalized transcripts, encode them into subword tokens, and split the dataset automatically.
+
+**Flow**:
+1. Read all transcripts from temporary `manifest.jsonl`.
+2. Train a HuggingFace `tokenizers` BPE model of size 300 with special tokens:
+   - `<blank>` (index 0) — CTC blank token
+   - `<unk>` (index 1) — unknown subword fallback
+   - `" "` (index 2) — space character
+3. Save BPE vocabulary mapping of size 300 to `data/vocab.json`.
+4. Encode the transcripts into token sequences using the trained BPE model.
+5. Shuffle the dataset with seed 42, and split into:
+   - **Train set (90%)**: `data/manifest_train.jsonl`
+   - **Val set (10%)**: `data/manifest_val.jsonl`
+6. Clean up the temporary `manifest.jsonl`.
 
 ---
 
@@ -247,7 +227,7 @@ mel = (mel - mean[:, None]) / std[:, None]
 
 ```
 data/
-├── vocab.json                  # 71-token character vocabulary
+├── vocab.json                  # 300-token BPE subword vocabulary
 ├── manifest_train.jsonl        # ~90% of samples, one JSON per line
 ├── manifest_val.jsonl          # ~10% of samples
 └── stats/
@@ -305,7 +285,7 @@ Components per block:
 ### CTC Head
 
 ```
-Linear(384 → 71) → log_softmax(dim=-1)
+Linear(384 → 300) → log_softmax(dim=-1)
 ```
 
 ### Full Model Summary
@@ -440,7 +420,7 @@ Each checkpoint contains:
 | `D_MODEL` | `384` | |
 | `NUM_HEADS` | `6` | |
 | `NUM_BLOCKS` | `16` | |
-| `VOCAB_SIZE` | `71` | |
+| `VOCAB_SIZE` | `300` | |
 
 ### Dataset (`hindi_asr/dataset.py` / `scripts/train.py`)
 
@@ -507,16 +487,16 @@ The script is **fully resumable**. If interrupted, re-run the same command — i
 Expected output at completion:
 ```
 Saved:              ~300000 spectrograms
-Processed:          ~300.00 hours
-Vocabulary size:    71 tokens
+Processed:          ~600.00 hours
+Vocabulary size:    300 tokens
 Rejected duration:  XXXXX
 Rejected SNR:       XXXXX
 Rejected empty:     XXXXX
 Rejected NaN:       XXXXX
-Stats saved to:     stats/global_stats.npz
+Stats saved to:     data/stats/global_stats.npz
 ```
 
-After the pipeline, manually split `manifest.jsonl` into `data/manifest_train.jsonl` (90%) and `data/manifest_val.jsonl` (10%), and move `vocab.json` and `stats/` into `data/`.
+No manual steps are required! The pipeline automatically shuffles and splits the dataset, trains the BPE tokenizer, and stores all artifacts directly in the `data/` directory.
 
 ### Step 2 — Training (from scratch)
 
